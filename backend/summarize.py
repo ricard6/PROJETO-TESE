@@ -25,8 +25,6 @@ summarizer_prompt = PromptTemplate(
     template="""
     You are an expert at synthesizing online discussions. 
     Given the following user comments that share a similar stance in an online discussion, summarize the key points into a few concise bullet points.
-    - Extract unique and meaningful arguments without repetition. 
-    - Use as many bullet points as necessary, but do not force a specific number.
 
     **Comments:**
     {comments}

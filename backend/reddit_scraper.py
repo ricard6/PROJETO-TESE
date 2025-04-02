@@ -15,37 +15,36 @@ class RedditResponse(BaseModel):
     
 
 def fetch_reddit_data(url: str):
-    """Fetch Reddit thread data and comments."""
+    """Fetch Reddit thread data and comments, keeping top 10 comments and their replies."""
     try:
-        # Convert URL to API URL
         if not url.endswith('/'):
             url += '/'
         api_url = f"{url}.json"
         
-        # Set headers to mimic a browser request
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         
-        # Send request
         response = requests.get(api_url, headers=headers)
         
         if response.status_code != 200:
             raise HTTPException(status_code=400, detail=f"Failed to access Reddit API: Status code {response.status_code}")
         
-        # Parse JSON response
         data = response.json()
         
-        # Extract post data
         post_data = data[0]['data']['children'][0]['data']
-        
-        # Extract comments
         comments_data = data[1]['data']['children']
-        
-        # Process comments
-        processed_comments = process_comments(comments_data)
-        
-        # Combine post and comments
+
+        # Sort comments by score and take top 10
+        sorted_comments = sorted(
+            [c for c in comments_data if c.get('kind') == 't1' and c['data'].get('author') != "AutoModerator"], 
+            key=lambda x: x['data'].get('score', 0), 
+            reverse=True
+        )[:10]
+
+        # Process only top 10 comments and their replies
+        processed_comments = process_comments(sorted_comments)
+
         thread_data = {
             'post': {
                 'title': post_data.get('title', ''),
@@ -65,7 +64,7 @@ def fetch_reddit_data(url: str):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error scraping Reddit thread: {str(e)}")
-
+    
 
 def process_text(text):
     """Add 'Citing:' on its own line before the first quote and 'End of Citation' after the last quote."""
@@ -91,9 +90,8 @@ def process_text(text):
     return "\n".join(processed_lines)
 
 
-
-def process_comments(comments_data, level=0):
-    """Process comments recursively, filtering out deleted and removed ones, and applying citation formatting."""
+def process_comments(comments_data, level=0, parent_body=None):
+    """Process comments recursively, keeping only the top 10 root comments by score and their direct replies."""
     processed = []
 
     for comment in comments_data:
@@ -115,17 +113,21 @@ def process_comments(comments_data, level=0):
             'id': comment_data.get('id', ''),
             'author': comment_data.get('author', ''),
             'created_utc': datetime.fromtimestamp(comment_data.get('created_utc', 0)).strftime('%Y-%m-%d %H:%M:%S') if comment_data.get('created_utc') else None,
-            'body': formatted_body,  # Use formatted body
+            'body': formatted_body,
             'score': comment_data.get('score', 0),
             'level': level,
+            'parent_body': parent_body,  # Include parent comment context
             'replies': []
         }
 
-        # Process replies if they exist
+        # Process direct replies
         if comment_data.get('replies') and comment_data['replies'] != '':
             replies_data = comment_data['replies']['data']['children']
-            comment_obj['replies'] = process_comments(replies_data, level + 1)
+            comment_obj['replies'] = process_comments(replies_data, level + 1, formatted_body)
 
         processed.append(comment_obj)
 
     return processed
+
+
+

@@ -54,18 +54,19 @@ if st.button("Go!", type="primary"):
             st.write(thread_data['post']['selftext'])
 
         # Sort comments by score (highest first)
-        sorted_comments = sorted(
-            [c for c in thread_data['comments'] if c['author'] != "AutoModerator"], 
-            key=lambda x: x['score'], reverse=True
-        )
+        sorted_comments = thread_data['comments']
 
-        # Extract top 10 comments
-        top_comments = [comment['body'] for comment in sorted_comments[:10]]
-
-        # Classify comments and group them
+        # Classify and group comments
         grouped_comments = {"FOR": [], "AGAINST": [], "NEUTRAL": []}
 
-        for comment in sorted_comments[:10]:  
+        for comment in sorted_comments:
+            # Extract top 5 replies for each comment
+            sorted_replies = sorted(comment['replies'], key=lambda x: x['score'], reverse=True)[:5]
+
+            # Add parent context if available
+            parent_context = f"Parent Comment: {comment.get('parent_body', 'N/A')}\n\n" if 'parent_body' in comment else ""
+
+            # Classify stance
             with st.spinner(f"Classifying stance..."):
                 stance_response = requests.post(
                     stanceClassifier_endpoint,
@@ -73,7 +74,7 @@ if st.button("Go!", type="primary"):
                         "thread_title": thread_data['post']['title'],
                         "thread_selftext": thread_data['post']['selftext'],
                         "identified_topic": topicIdentifier,
-                        "comment_body": comment['body']
+                        "comment_body": f"{parent_context}{comment['body']}"
                     }
                 )
 
@@ -82,10 +83,11 @@ if st.button("Go!", type="primary"):
                 grouped_comments[stance_result].append({
                     "author": comment["author"],
                     "score": comment["score"],
-                    "body": comment["body"]
+                    "body": comment["body"],
+                    "replies": sorted_replies  # Include top 5 replies
                 })
 
-        # Get stance summaries
+        # Summarize arguments per stance
         with st.spinner("Analyzing arguments by stance..."):
             stance_summary_response = requests.post(
                 summarizer_endpoint,
@@ -98,37 +100,51 @@ if st.button("Go!", type="primary"):
                 }
             )
 
-            if stance_summary_response.status_code == 200:
-                stance_summaries = stance_summary_response.json().get("summaries", {})
-            else:
-                st.error("Failed to summarize arguments by stance.")
-                stance_summaries = {
-                    "FOR": "Unable to summarize favorable arguments.",
-                    "AGAINST": "Unable to summarize opposing arguments.",
-                    "NEUTRAL": "Unable to summarize neutral arguments."
-                }
-                
+            stance_summaries = stance_summary_response.json().get("summaries", {}) if stance_summary_response.status_code == 200 else {
+                "FOR": "Unable to summarize favorable arguments.",
+                "AGAINST": "Unable to summarize opposing arguments.",
+                "NEUTRAL": "Unable to summarize neutral arguments."
+            }
 
         # Display grouped comments and their summaries
         st.subheader("Arguments by Stance")
+
+        # Column containers for the summaries
         col1, col2 = st.columns([1.5, 1.5])
 
         with col1:
             st.markdown("### 🟩 Favorable Arguments")
             st.markdown(stance_summaries["FOR"])
-            with st.expander("Original Comments", expanded=False):
-                for comment in grouped_comments["FOR"]:
-                    st.write(f"**{comment['author']}** ({comment['score']} points)")
-                    st.write(comment["body"])
-                    st.write("---")
 
         with col2:
             st.markdown("### 🟥 Against Arguments")
             st.markdown(stance_summaries["AGAINST"])
+
+        # New row for the expanders - this ensures they're aligned
+        expander_col1, expander_col2 = st.columns([1.5, 1.5])
+
+        with expander_col1:
+            with st.expander("Original Comments", expanded=False):
+                for comment in grouped_comments["FOR"]:
+                    st.write(f"**{comment['author']}** ({comment['score']} points)")
+                    st.write(comment["body"])
+                    # Show replies
+                    for reply in comment["replies"]:
+                        st.markdown(f"↳ **{reply['author']}** ({reply['score']} points)")
+                        formatted_reply = "\n> ".join(reply["body"].split("\n"))
+                        st.markdown(f"> {formatted_reply}")
+                    st.write("---")
+
+        with expander_col2:
             with st.expander("Original Comments", expanded=False):
                 for comment in grouped_comments["AGAINST"]:
                     st.write(f"**{comment['author']}** ({comment['score']} points)")
                     st.write(comment["body"])
+                    # Show replies
+                    for reply in comment["replies"]:
+                        st.markdown(f"↳ **{reply['author']}** ({reply['score']} points)")
+                        formatted_reply = "\n> ".join(reply["body"].split("\n"))
+                        st.markdown(f"> {formatted_reply}")
                     st.write("---")
 
         # Show neutral arguments separately
@@ -137,9 +153,11 @@ if st.button("Go!", type="primary"):
                 st.markdown(stance_summaries["NEUTRAL"])
                 st.write("---")
                 for comment in grouped_comments["NEUTRAL"]:
-                    st.write("**Original Comments**")
                     st.write(f"**{comment['author']}** ({comment['score']} points)")
                     st.write(comment["body"])
+                    # Show replies
+                    for reply in comment["replies"]:
+                        st.markdown(f"↳ **{reply['author']}** ({reply['score']} points)")
+                        formatted_reply = "\n> ".join(reply["body"].split("\n"))
+                        st.markdown(f"> {formatted_reply}")
                     st.write("---")
-        else:
-            st.error(f"Failed to fetch Reddit thread: {scrape_response.json().get('error', 'Unknown error')}")
