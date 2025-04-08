@@ -105,6 +105,60 @@ if st.button("Go!", type="primary"):
                 "AGAINST": "Unable to summarize opposing arguments.",
                 "NEUTRAL": "Unable to summarize neutral arguments."
             }
+        
+        # Sample data (Replace with actual stance counts)
+        stance_counts = {
+            "FOR": len(grouped_comments["FOR"]),
+            "AGAINST": len(grouped_comments["AGAINST"]),
+            "NEUTRAL": len(grouped_comments["NEUTRAL"])
+        }
+
+        total_comments = sum(stance_counts.values())  # Total number of classified comments
+
+        # Calculate stance percentages
+        if total_comments > 0:
+            stance_percentages = {
+                "FOR": (stance_counts["FOR"] / total_comments) * 100,
+                "AGAINST": (stance_counts["AGAINST"] / total_comments) * 100,
+                "NEUTRAL": (stance_counts["NEUTRAL"] / total_comments) * 100
+            }
+        else:
+            stance_percentages = {"FOR": 0, "AGAINST": 0, "NEUTRAL": 0}
+
+        # Convert percentages to CSS-friendly format
+        bar_style = f"""
+            <div style="display: flex; width: 100%; height: 25px; 
+                        border-radius: 15px; overflow: hidden; 
+                        border: 2px solid #ddd; margin-bottom: 20px; box-shadow: 2px 2px 5px rgba(0,0,0,0.2);">
+                <div style="width: {stance_percentages['FOR']}%; background: linear-gradient(to right, #2ecc71, #27ae60);"></div>
+                <div style="width: {stance_percentages['NEUTRAL']}%; background: linear-gradient(to right, #f1c40f, #f39c12);"></div>
+                <div style="width: {stance_percentages['AGAINST']}%; background: linear-gradient(to right, #e74c3c, #c0392b);"></div>
+            </div>
+        """
+        st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
+        st.subheader("📊 Stance Distribution")
+        st.markdown(bar_style, unsafe_allow_html=True)
+
+        # Show exact percentage values
+        legend_html = f"""
+            <div style="display: flex; align-items: center; gap: 15px;">
+                <div style="display: flex; align-items: center;">
+                    <div style="width: 15px; height: 15px; background-color: #2ecc71; border-radius: 3px; margin-right: 5px;"></div>
+                    <span><b>For:</b> {stance_percentages['FOR']:.0f}%</span>
+                </div>
+                <div style="display: flex; align-items: center;">
+                    <div style="width: 15px; height: 15px; background-color: #f1c40f; border-radius: 3px; margin-right: 5px;"></div>
+                    <span><b>Neutral:</b> {stance_percentages['NEUTRAL']:.0f}%</span>
+                </div>
+                <div style="display: flex; align-items: center;">
+                    <div style="width: 15px; height: 15px; background-color: #e74c3c; border-radius: 3px; margin-right: 5px;"></div>
+                    <span><b>Against:</b> {stance_percentages['AGAINST']:.0f}%</span>
+                </div>
+            </div>
+        """
+
+        st.markdown(legend_html, unsafe_allow_html=True)
+        st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
 
         # Display grouped comments and their summaries
         st.subheader("Arguments by Stance")
@@ -149,7 +203,7 @@ if st.button("Go!", type="primary"):
 
         # Show neutral arguments separately
         if grouped_comments["NEUTRAL"]:
-            with st.expander("🟡 Neutral Arguments", expanded=False):
+            with st.expander("🟨 Neutral Arguments", expanded=False):
                 st.markdown(stance_summaries["NEUTRAL"])
                 st.write("---")
                 for comment in grouped_comments["NEUTRAL"]:
@@ -161,3 +215,5 @@ if st.button("Go!", type="primary"):
                         formatted_reply = "\n> ".join(reply["body"].split("\n"))
                         st.markdown(f"> {formatted_reply}")
                     st.write("---")
+
+        
