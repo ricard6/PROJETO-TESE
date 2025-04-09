@@ -3,6 +3,7 @@ from backend.reddit_scraper import fetch_reddit_data, RedditRequest, RedditRespo
 from backend.topic_identifier import topicIdentifier, TopicIdentifierRequest
 from backend.summarize import SummarizeRequest, summarize_grouped_comments
 from backend.stance_classification import stance_classifier, StanceClassificationRequest
+from backend.kg_creator import KGRequest, create_knowledge_graph
 from typing import Dict, List
 
 
@@ -32,5 +33,10 @@ async def identify_topic(request: TopicIdentifierRequest):
 @app.post("/stanceClassifier")
 async def classify_stance(request: StanceClassificationRequest):
     return stance_classifier(request)
+
+# Knowledge graph creator endpoint
+@app.post("/kgCreator")
+def build_kg(request: KGRequest):
+    return create_knowledge_graph(request.thread_data)
 
 

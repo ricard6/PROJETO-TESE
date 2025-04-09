@@ -21,6 +21,7 @@ summarizer_endpoint = f"{backend_url}/summarizer"
 reddit_scraper_endpoint = f"{backend_url}/reddit_scraper" 
 topicIdentifier_endpoint = f"{backend_url}/topicIdentifier"
 stanceClassifier_endpoint = f"{backend_url}/stanceClassifier"
+kgCreator_endpoint = f"{backend_url}/kgCreator"
 
 # Button to process
 if st.button("Go!", type="primary"):
@@ -231,3 +232,14 @@ if st.button("Go!", type="primary"):
                     st.write(comment["body"])
                     render_replies(comment["replies"])
                     st.write("---")
+
+        with st.spinner("Building Knowledge Graph..."):
+            kg_response = requests.post(
+                kgCreator_endpoint, 
+                json={"thread_data": thread_data}
+            )
+
+            if kg_response.status_code == 200:
+                st.success("Knowledge graph successfully built from discussion!")
+            else:
+                st.error(f"Failed to build knowledge graph: {kg_response.text}")
