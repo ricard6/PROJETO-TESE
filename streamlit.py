@@ -234,12 +234,25 @@ if st.button("Go!", type="primary"):
                     st.write("---")
 
         with st.spinner("Building Knowledge Graph..."):
+            # Debug the structure of the data being sent
+            st.write(f"Found {len(grouped_comments.get('FOR', []))} FOR comments")
+            st.write(f"Found {len(grouped_comments.get('AGAINST', []))} AGAINST comments")
+            st.write(f"Found {len(grouped_comments.get('NEUTRAL', []))} NEUTRAL comments")
+            
+            # Replace thread_data['comments'] with grouped + classified comments and replies
+            thread_data["classified_comments"] = grouped_comments
+            
             kg_response = requests.post(
                 kgCreator_endpoint, 
                 json={"thread_data": thread_data}
             )
 
             if kg_response.status_code == 200:
-                st.success("Knowledge graph successfully built from discussion!")
+                kg_result = kg_response.json()
+                if kg_result.get("status") == "success":
+                    st.write(f"Number of nodes: {kg_result.get('nodes_created', {})}")
+                    st.success("Knowledge graph successfully built from discussion!")
+                else:
+                    st.error(f"Error building knowledge graph: {kg_result.get('message', 'Unknown error')}")
             else:
                 st.error(f"Failed to build knowledge graph: {kg_response.text}")

@@ -25,6 +25,7 @@ summarizer_prompt = PromptTemplate(
     template="""
     You are an expert at synthesizing online discussions. 
     Given the following user comments that share a similar stance in an online discussion, summarize the key points into a few concise bullet points.
+    
 
     **Comments:**
     {comments}
