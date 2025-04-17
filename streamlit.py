@@ -233,13 +233,13 @@ if st.button("Go!", type="primary"):
                     render_replies(comment["replies"])
                     st.write("---")
 
+        # Debug the structure of the data being sent
+        st.write(f"Found {len(grouped_comments.get('FOR', []))} FOR comments")
+        st.write(f"Found {len(grouped_comments.get('AGAINST', []))} AGAINST comments")
+        st.write(f"Found {len(grouped_comments.get('NEUTRAL', []))} NEUTRAL comments")
+
         with st.spinner("Building Knowledge Graph..."):
-            # Debug the structure of the data being sent
-            st.write(f"Found {len(grouped_comments.get('FOR', []))} FOR comments")
-            st.write(f"Found {len(grouped_comments.get('AGAINST', []))} AGAINST comments")
-            st.write(f"Found {len(grouped_comments.get('NEUTRAL', []))} NEUTRAL comments")
-            
-            # Replace thread_data['comments'] with grouped + classified comments and replies
+    
             thread_data["classified_comments"] = grouped_comments
             
             kg_response = requests.post(
