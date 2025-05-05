@@ -279,6 +279,7 @@ elif st.session_state.page == 'incremental_analysis':
             </div>
         """
         st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
+        st.divider()
         st.subheader("📊 Stance Distribution")
         st.markdown(bar_style, unsafe_allow_html=True)
 
@@ -301,6 +302,8 @@ elif st.session_state.page == 'incremental_analysis':
 
         st.markdown(legend_html, unsafe_allow_html=True)
         st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
+
+    st.divider()
     
     # Step 3: Summarize arguments by stance
     if process_state["stance_summaries"] is None and process_state["all_classified_bodies"]:
@@ -367,6 +370,9 @@ elif st.session_state.page == 'incremental_analysis':
                         st.write(comment["body"])
                         render_replies(comment["replies"])
                         st.write("---")
+    
+    st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
+    st.divider()
     
     # Step 4: Build knowledge graph
     if process_state["kg_info"] is None and process_state["grouped_comments"]:
@@ -478,6 +484,7 @@ elif st.session_state.page == 'discussion_view':
             </div>
         """
         st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
+        st.divider()
         st.subheader("📊 Stance Distribution")
         st.markdown(bar_style, unsafe_allow_html=True)
 
@@ -500,6 +507,7 @@ elif st.session_state.page == 'discussion_view':
 
         st.markdown(legend_html, unsafe_allow_html=True)
         st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
+        st.divider()
 
         # Display argument summaries
         st.subheader("Arguments by Stance - Summary")
@@ -542,6 +550,9 @@ elif st.session_state.page == 'discussion_view':
                     render_replies(comment["replies"])
                     st.write("---")
                     
+        st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
+        st.divider()
+
         # Display Knowledge Graph info if it was successful
         if kg_info.get("success", False):
             st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
