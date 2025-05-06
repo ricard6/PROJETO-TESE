@@ -20,6 +20,9 @@ def run_query(cypher, parameters={}):
 # Streamlit UI
 st.set_page_config(page_title="🧠 Explore Discussions", layout="wide")
 st.title("🧠 Explore Stored Discussions")
+st.markdown("### Choose a topic from the discussions stored in the Discussion Database to explore its details.")
+st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
+
 
 # First, fetch all available topic titles from Neo4j
 topic_titles_result = run_query("MATCH (t:Topic) RETURN t.title AS title ORDER BY t.title")
@@ -66,30 +69,80 @@ if selected_topic:
     opposing_count = opposing_count or 0
     neutral_count = neutral_count or 0
 
-    st.markdown("""
-    <style>
-        .space {
-            margin-top: 30px;
-        }
-    </style>
-    <div class="space"></div>
-    """, unsafe_allow_html=True)
+    st.markdown("""<style>.space {margin-top: 30px;}</style><div class="space"></div>""", unsafe_allow_html=True)
 
     # Display the metrics
     col1, col2, col3 = st.columns(3)
 
     with col1:
         st.metric(label="Supporting Arguments Identified", value=supporting_count)
-    with col2:
-        st.metric(label="Opposing Arguments Identified", value=opposing_count)
-    with col3:
+    with col2: 
         st.metric(label="Neutral Arguments Identified", value=neutral_count)
+    with col3:
+        st.metric(label="Opposing Arguments Identified", value=opposing_count)
     
     # Display divider
     st.divider()
-    
+    st.header("Explore each post and its extracted arguments")
+
+    # Fetch all discussion posts related to the selected topic
+    # Updated query to use the correct property name (body instead of text)
+    discussion_posts = run_query("""
+        MATCH (c)-[:SUPPORTS|OPPOSES|NEUTRAL]->(t:Topic {title: $title})
+        RETURN id(c) AS comment_id, c.body AS text
+        ORDER BY c.body
+    """, {"title": selected_topic})
+
+    # Build a dropdown of posts (showing a preview for UI)
+    if discussion_posts:
+        post_options = {
+        f"Post #{row['comment_id']} - {row['text'][:100]}..." if row.get("text") else f"Post #{row['comment_id']} - [No text]": row["comment_id"]
+        for row in discussion_posts
+    }
+
+        selected_post_label = st.selectbox("Select a Discussion Post", list(post_options.keys()))
+        selected_post_id = post_options[selected_post_label]
+
+        # Show full post content
+        # Updated query to use the correct property name (body instead of text)
+        post_details = run_query("""
+            MATCH (c)
+            WHERE id(c) = $comment_id
+            RETURN c.body AS full_text
+        """, {"comment_id": selected_post_id})
+
+        st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
+        st.markdown("### 📝 Full Post Content")
+        st.write(post_details[0]["full_text"] if post_details else "No content found.")
+
+        # Show arguments extracted from this post
+        extracted_arguments = run_query("""
+            MATCH (a:Argument)-[:EXTRACTED_FROM]->(c)
+            WHERE id(c) = $comment_id
+            RETURN a.text AS ArgumentText, a.stance AS Stance
+        """, {"comment_id": selected_post_id})
+
+        st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
+        st.markdown("### 🧩 Extracted Arguments")
+        if extracted_arguments:
+            for arg in extracted_arguments:
+                st.markdown(f"- **{arg['Stance']}**: {arg['ArgumentText']}")
+        else:
+            st.info("No arguments were extracted from this post.")
+    else:
+        st.info("No posts found for this topic.")
+
+    st.divider()
+    st.header("Explore Further")
+
     # Define queries that can be applied to the selected topic
     query_options = {
+        "Topic Details": {
+            "query": """
+                MATCH (t:Topic {title: $title})
+                RETURN t.title AS Title, t.url AS URL
+            """
+        },
         "List of Arguments by Stance": {
             "query": """
                 MATCH (c)-[:SUPPORTS|OPPOSES|NEUTRAL]->(t:Topic {title: $title})
@@ -98,10 +151,35 @@ if selected_topic:
                 RETURN a.text AS Argument, a.stance AS Stance
             """
         },
-        "Topic Details": {
+        "Replies to Supporting Comments": {
             "query": """
-                MATCH (t:Topic {title: $title})
-                RETURN t.title AS Title, t.url AS URL
+                MATCH (c:Comment)-[:SUPPORTS]->(t:Topic {title: $title})
+                MATCH (r:Reply)-[:REPLY_TO]->(c)
+                RETURN c.body AS ParentComment, 
+                       collect(r.body) AS Replies,
+                       size(collect(r.body)) AS ReplyCount
+                ORDER BY ReplyCount DESC
+                LIMIT 10
+            """
+        },
+        "Replies to Opposing Comments": {
+            "query": """
+                MATCH (c:Comment)-[:OPPOSES]->(t:Topic {title: $title})
+                MATCH (r:Reply)-[:REPLY_TO]->(c)
+                RETURN c.body AS ParentComment, 
+                       collect(r.body) AS Replies,
+                       size(collect(r.body)) AS ReplyCount
+                ORDER BY ReplyCount DESC
+                LIMIT 10
+            """
+        },
+        "Popular Comments (by score)": {
+            "query": """
+                MATCH (c:Comment)-[r:SUPPORTS|OPPOSES|NEUTRAL]->(t:Topic {title: $title})
+                RETURN c.body AS Comment, c.author AS Author, 
+                       c.score AS Score, type(r) AS Stance
+                ORDER BY c.score DESC
+                LIMIT 15
             """
         }
     }
