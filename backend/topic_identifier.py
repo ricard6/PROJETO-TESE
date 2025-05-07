@@ -7,11 +7,11 @@ import os
 # Retrieve API key from environment variable
 openai_api_key = os.getenv("OPENAI_API_KEY")
 
-#Define the request
+# Define the request
 class TopicIdentifierRequest(BaseModel):
-    text:str
+    text:str    # The text to analyze
 
-# Discussion topic identifier
+# Discussion topic identifier model (via Langchain)
 topicIdentifier_model = ChatOpenAI(
     model = "gpt-4o-mini",
     max_tokens = 200,
@@ -19,9 +19,9 @@ topicIdentifier_model = ChatOpenAI(
     openai_api_key = openai_api_key
 )
 
-
+# Function that identifies the discussion topic and stances 
 def topicIdentifier(request: TopicIdentifierRequest):
-    # Prompt to identify the main topic in the discussion
+    # Prompt to guide the model's response
     prompt = PromptTemplate(
         input_variables=["text"],
         template ="""
@@ -35,13 +35,15 @@ def topicIdentifier(request: TopicIdentifierRequest):
         """
     )
 
-    # Directly use ChatOpenAI inside LLMChain
+    # Use LangChain to combine the model and prompt
     topic_chain = LLMChain(
         llm = topicIdentifier_model,
         prompt = prompt
     )
 
+    # Run the chain with input text
     response = topic_chain.run(text=request.text)
+    
+    # Clean and return the result
     topic_text = response.strip()
-
     return {"topic": topic_text}

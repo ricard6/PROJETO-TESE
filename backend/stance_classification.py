@@ -14,9 +14,9 @@ class StanceClassificationRequest(BaseModel):
     identified_topic: str
     comment_body: str
 
-# Initialize LangChain LLM model
+# Initialize LangChain stance detection model
 stance_model = ChatOpenAI(
-    model="gpt-4o-mini",  
+    model="gpt-4o",  
     openai_api_key=openai_api_key,  
     temperature=0,
     max_tokens=10

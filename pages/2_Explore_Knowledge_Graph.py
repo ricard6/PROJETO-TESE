@@ -20,7 +20,6 @@ def run_query(cypher, parameters={}):
 # Streamlit UI
 st.set_page_config(page_title="🧠 Explore Discussions", layout="wide")
 st.title("🧠 Explore Stored Discussions")
-st.markdown("### Choose a topic from the discussions stored in the Discussion Database to explore its details.")
 st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
 
 
@@ -33,7 +32,8 @@ if not topic_titles:
     st.warning("No topics available in the database.")
     st.stop()
 
-selected_topic = st.selectbox("Choose a Topic to Explore", topic_titles)
+selected_topic = st.selectbox("Choose a topic from the discussions stored in the Discussion Database to explore its details.", topic_titles)
+st.markdown(f"### {selected_topic}")
 
 # After topic selection, display metrics
 if selected_topic:
@@ -176,10 +176,10 @@ if selected_topic:
         "Popular Comments (by score)": {
             "query": """
                 MATCH (c:Comment)-[r:SUPPORTS|OPPOSES|NEUTRAL]->(t:Topic {title: $title})
-                RETURN c.body AS Comment, c.author AS Author, 
+                RETURN c.body AS Comment, 
                        c.score AS Score, type(r) AS Stance
                 ORDER BY c.score DESC
-                LIMIT 15
+                LIMIT 10
             """
         }
     }
@@ -195,6 +195,24 @@ if selected_topic:
         results = run_query(selected_query["query"], parameters)
         if results:
             st.write(f"### Results for '{selected_topic}':")
-            st.dataframe(results, use_container_width=True)
+
+            if "Replies" in results[0] and "ParentComment" in results[0]:
+                for i, item in enumerate(results, 1):
+                    with st.expander(f"Comment {i}"):
+                        st.markdown("**🧠 Parent Comment:**")
+                        st.markdown(item["ParentComment"])
+
+                        replies = item.get("Replies", [])
+                        if replies:
+                            st.markdown("**💬 Replies:**")
+                            for j, reply in enumerate(replies, 1):
+                                st.text(f"Reply #{j}:\n{reply}")
+                        else:
+                            st.write("No replies found.")
+            else:
+                st.dataframe(results, use_container_width=True)
         else:
             st.info(f"No results found for '{selected_topic}' with the selected query.")
+
+
+
