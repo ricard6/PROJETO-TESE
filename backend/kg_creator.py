@@ -9,41 +9,40 @@ from pydantic import BaseModel
 from typing import Any, Dict, List
 import logging
 
-logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger('kg_creator')
-
+# Load environment variables
 load_dotenv()
 
+logger = logging.getLogger('kg_creator')
+
+# Initialize Neo4j driver
 driver = None
 try:
     driver = GraphDatabase.driver(
         os.getenv("NEO4J_URI"),
         auth=(os.getenv("NEO4J_USER"), os.getenv("NEO4J_PASSWORD"))
     )
+    # Test the connection by running a dummy query
     with driver.session() as session:
         session.run("RETURN 1")
     logger.info("Successfully connected to Neo4j")
 except Exception as e:
     logger.error(f"Failed to connect to Neo4j: {e}")
 
-llm = None
-try:
-    llm = ChatOpenAI(
-        model="gpt-4o",
-        temperature=0,
-        openai_api_key=os.getenv("OPENAI_API_KEY")
-    )
-    logger.info("Successfully initialized LLM")
-except Exception as e:
-    logger.error(f"Failed to initialize LLM: {e}")
+# Initialize OpenAI model
+llm = ChatOpenAI(
+    model="gpt-4o",
+    temperature=0,
+    openai_api_key=os.getenv("OPENAI_API_KEY")
+)
 
+# Stance mapping
 STANCE_MAP = {
     "FOR": "SUPPORTS",
     "AGAINST": "OPPOSES",
     "NEUTRAL": "NEUTRAL"
 }
 
+# Prompt to extract arguments
 argument_extraction_prompt = PromptTemplate(
     input_variables=["text", "topic"],
     template="""
@@ -66,107 +65,97 @@ argument_extraction_prompt = PromptTemplate(
     """
 )
 
-argument_chain = LLMChain(llm=llm, prompt=argument_extraction_prompt) if llm else None
+# Build the argument extraction chain
+argument_chain = LLMChain(llm=llm, prompt=argument_extraction_prompt)
 
+# Pydantic model
 class KGRequest(BaseModel):
     thread_data: Dict[str, Any]
 
-def create_knowledge_graph(thread_data: dict) -> dict:
-    if not driver:
-        return {"status": "error", "message": "Neo4j driver not initialized"}
+# Argument extraction
+def extract_arguments(text: str, topic: str) -> List[str]:
+    response = argument_chain.run(text=text, topic=topic)
+    if "No clear arguments found" in response:
+        return []
+    return [line.split(" ", 1)[-1].strip() for line in response.strip().split('\n') if line.strip()]
 
+# Knowledge graph creation
+def create_knowledge_graph(thread_data: dict) -> dict:
+    # Get post title and URL (used as unique discussion ID)
+    topic_title = thread_data['post'].get('title', 'Unknown Topic')
+    thread_url = thread_data['post'].get('url', 'unknown')
     comment_count = 0
     reply_count = 0
     argument_count = 0
 
-    try:
-        topic_title = thread_data['post'].get('title', 'Unknown Topic')
-        thread_url = thread_data['post'].get('url', 'unknown')
+    with driver.session() as session:
+        # Check if the thread already exists in the graph
+        existing = session.execute_read(check_existing_discussion_by_url, thread_url)
+        # Ensure the topic node is present in the graph
+        discussion_id = existing if existing else str(uuid.uuid4())
+        session.execute_write(merge_topic, topic_title, discussion_id, thread_url)
 
-        with driver.session() as session:
-            existing = session.execute_read(check_existing_discussion_by_url, thread_url)
-            discussion_id = existing if existing else str(uuid.uuid4())
-            if existing:
-                logger.info(f"Graph already exists for URL: {thread_url} (discussion_id: {existing}), updating...")
-            else:
-                logger.info(f"Creating new graph for: {topic_title} | discussion_id: {discussion_id}")
+        # Loop through each stance category: FOR, AGAINST, NEUTRAL
+        for stance in ["FOR", "AGAINST", "NEUTRAL"]:
+            for i, comment in enumerate(thread_data["classified_comments"].get(stance, [])):
+                # Ensure each comment has a unique ID
+                if "id" not in comment or not comment["id"]:
+                    comment["id"] = f"comment_{stance}_{i}"
+                comment.update({"discussion_id": discussion_id})
 
-            session.execute_write(merge_topic, topic_title, discussion_id, thread_url)
+                # Check if the comment is already in the database
+                comment_exists = session.execute_read(check_comment_exists, comment["id"], discussion_id)
+                session.execute_write(merge_comment, comment)
+                
+                # Only process new comments
+                if not comment_exists:
+                    comment_count += 1
+                    session.execute_write(connect_comment_to_topic, comment["id"], topic_title, stance, discussion_id)
 
-            for stance in ["FOR", "AGAINST", "NEUTRAL"]:
-                for i, comment in enumerate(thread_data["classified_comments"].get(stance, [])):
-                    if "id" not in comment or not comment["id"]:
-                        comment["id"] = f"comment_{stance}_{i}"
-                    comment.update({"discussion_id": discussion_id})
+                    # Extract arguments from the comment and store them in the graph
+                    arguments = extract_arguments(comment.get("body", ""), topic_title)
+                    for arg in arguments:
+                        arg = arg.strip()
+                        session.execute_write(merge_argument, arg, stance, discussion_id)
+                        session.execute_write(connect_argument_to_comment, arg, comment["id"], discussion_id)
+                        argument_count += 1
+                
+                # Handle replies for the comment
+                for j, reply in enumerate(comment.get("replies", [])):
+                    if "id" not in reply or not reply["id"]:
+                        reply["id"] = f"reply_{comment['id']}_{j}"
+                    else:
+                        reply["id"] = f"{comment['id']}_{reply['id']}"
+                    reply.update({"discussion_id": discussion_id})
 
-                    # Check if comment exists in the database
-                    comment_exists = session.execute_read(check_comment_exists, comment["id"], discussion_id)
-                    session.execute_write(merge_comment, comment)
-                    
-                    # Only create new relationships and extract arguments if this is a new comment
-                    if not comment_exists:
-                        comment_count += 1
-                        session.execute_write(connect_comment_to_topic, comment["id"], topic_title, stance, discussion_id)
+                    # Check if the reply is already in the database
+                    reply_exists = session.execute_read(check_reply_exists, reply["id"], discussion_id)
+                    session.execute_write(merge_reply, reply)
 
-                        if argument_chain:
-                            arguments = extract_arguments(comment.get("body", ""), topic_title)
-                            for arg in arguments:
-                                arg = arg.strip()
-                                session.execute_write(merge_argument, arg, stance, discussion_id)
-                                session.execute_write(connect_argument_to_comment, arg, comment["id"], discussion_id)
-                                argument_count += 1
+                    if not reply_exists:
+                        reply_count += 1
+                        session.execute_write(connect_reply_to_comment, reply["id"], comment["id"], discussion_id)
 
-                    for j, reply in enumerate(comment.get("replies", [])):
-                        if "id" not in reply or not reply["id"]:
-                            reply["id"] = f"reply_{comment['id']}_{j}"
-                        else:
-                            reply["id"] = f"{comment['id']}_{reply['id']}"
-                        reply.update({"discussion_id": discussion_id})
+                        # Extract and add arguments from the reply
+                        arguments = extract_arguments(reply.get("body", ""), topic_title)
+                        for arg in arguments:
+                            arg = arg.strip()
+                            session.execute_write(merge_argument, arg, reply.get("stance", "NEUTRAL"), discussion_id)
+                            session.execute_write(connect_argument_to_reply, arg, reply["id"], discussion_id)
+                            argument_count += 1
 
-                        # Check if reply exists in the database
-                        reply_exists = session.execute_read(check_reply_exists, reply["id"], discussion_id)
-                        session.execute_write(merge_reply, reply)
-                        
-                        # Only create new relationships and extract arguments if this is a new reply
-                        if not reply_exists:
-                            reply_count += 1
-                            session.execute_write(connect_reply_to_comment, reply["id"], comment["id"], discussion_id)
-
-                            if argument_chain:
-                                arguments = extract_arguments(reply.get("body", ""), topic_title)
-                                for arg in arguments:
-                                    arg = arg.strip()
-                                    session.execute_write(merge_argument, arg, reply.get("stance", "NEUTRAL"), discussion_id)
-                                    session.execute_write(connect_argument_to_reply, arg, reply["id"], discussion_id)
-                                    argument_count += 1
-
-        logger.info(f"Graph update complete: {comment_count} new comments, {reply_count} new replies, {argument_count} new arguments.")
-        return {
-            "status": "success",
-            "discussion_id": discussion_id,
-            "nodes_created": {
-                "topic": 1,
-                "comments": comment_count,
-                "replies": reply_count,
-                "arguments": argument_count
-            }
+    return {
+        "status": "success",
+        "discussion_id": discussion_id,
+        "nodes_created": {
+            "topic": 1,
+            "comments": comment_count,
+            "replies": reply_count,
+            "arguments": argument_count
         }
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        return {"status": "error", "message": str(e)}
+    }
 
-def extract_arguments(text: str, topic: str) -> List[str]:
-    try:
-        if not argument_chain:
-            return []
-        response = argument_chain.run(text=text, topic=topic)
-        if "No clear arguments found" in response:
-            return []
-        return [line.split(" ", 1)[-1].strip() for line in response.strip().split('\n') if line.strip()]
-    except Exception as e:
-        logger.error(f"Argument extraction error: {e}")
-        return []
-
+# Cypher helpers
 def check_existing_discussion_by_url(tx, url: str):
     result = tx.run("""
         MATCH (t:Topic {url: $url})
