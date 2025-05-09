@@ -46,22 +46,54 @@ STANCE_MAP = {
 argument_extraction_prompt = PromptTemplate(
     input_variables=["text", "topic"],
     template="""
-    You are an AI trained to extract arguments from Reddit discussions.
+    You are an AI trained to extract formal, self-contained, **non-redundant arguments** from Reddit discussions.
 
-    Given a Reddit comment or reply and the main discussion topic, extract ONLY the arguments clearly expressed in the text.
-    Return them as a numbered list with ONLY the arguments, no explanatory text.
+    Your task is to extract only arguments that can be used in scientific, academic, or logical contexts. Arguments should clearly support or oppose a specific claim related to the discussion topic. Avoid insults, and vague statements.
 
-    CRITICAL INSTRUCTIONS:
-    - Each argument must be SELF-CONTAINED: It should make complete sense on its own, without requiring the reader to see the original comment.
-    - Do NOT include vague phrases like "this" or "it" without clarifying what is being referred to.
-    - Avoid passive constructions unless they are fully understandable.
-    - Exclude irrelevant content or background information. Focus only on specific opinions, reasons, or justifications that support or oppose the topic.
-    - Express arguments clearly and concisely.
-    - If there are no clear arguments, return: "No clear arguments found."
+    ### INSTRUCTIONS:
+    - Extract arguments that include **reasoning, causal relationships, or factual claims**.
+    - Each argument must be **self-contained**: don't use pronouns like “this” or “it” without defining them.
+    - **Avoid repeating the same idea** in different words.
+    - Do **not** extract vague, general statements or insults.
+    - If no clear arguments exist, return: **"No clear arguments found."**
+
+    ### EXAMPLES:
+
+    Topic: "Should schools ban smartphones?"
+    Text:
+    Smartphones distract students from learning.  
+    Kids use them during class to cheat on tests.  
+    Smartphones allow students to stay connected with parents in emergencies.
+
+    Output:
+    1. Smartphones distract students from learning.
+    2. Students use smartphones to cheat during exams.
+    3. Smartphones can help students stay in touch with parents during emergencies.
+
+    ---
+
+    Topic: "Is Trump a threat to democracy?"
+    Text:
+    Trump is very stupid.  
+    Trump is cunning and wants revenge.  
+    He pressures officials to do what he wants.  
+    Trump uses his power to discredit investigations.
+
+    Output:
+    1. Trump has pressured government officials to influence investigations.
+    2. Trump has used his power to discredit investigations and investigators.
+    3. Trump seeks to consolidate power for personal gain, undermining democratic norms.
+
+    ---
+
+    ### Now extract arguments for the following post:
 
     Reddit Topic: "{topic}"
 
-    Content: {text}
+    Content:
+    {text}
+
+    Only output a numbered list of arguments, or "No clear arguments found."
     """
 )
 
