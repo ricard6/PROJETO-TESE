@@ -61,7 +61,7 @@ argument_extraction_prompt = PromptTemplate(
 
     Topic: "Should schools ban smartphones?"
     Text:
-    Smartphones distract students from learning.  
+    Parents that give kids smarthphones are stupid. Smartphones distract students from learning.  
     Kids use them during class to cheat on tests.  
     Smartphones allow students to stay connected with parents in emergencies.
 

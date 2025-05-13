@@ -85,26 +85,28 @@ if selected_topic:
     st.divider()
     st.header("Explore each post and its extracted arguments")
 
-    # Fetch all discussion posts related to the selected topic
-    # Updated query to use the correct property name (body instead of text)
+    # Fetch all comments and replies related to the selected topic
     discussion_posts = run_query("""
-        MATCH (c)-[:SUPPORTS|OPPOSES|NEUTRAL]->(t:Topic {title: $title})
+        MATCH (parent_comment)-[:SUPPORTS|OPPOSES|NEUTRAL]->(t:Topic {title: $title})
+        OPTIONAL MATCH (reply)-[:REPLY_TO]->(parent_comment)
+        WITH collect(parent_comment) + collect(reply) AS all_comments
+        UNWIND all_comments AS c
+        WITH DISTINCT c WHERE c IS NOT NULL
         RETURN id(c) AS comment_id, c.body AS text
         ORDER BY c.body
     """, {"title": selected_topic})
 
-    # Build a dropdown of posts (showing a preview for UI)
+    # Build dropdown of posts (including replies)
     if discussion_posts:
         post_options = {
-        f"Post #{row['comment_id']} - {row['text'][:100]}..." if row.get("text") else f"Post #{row['comment_id']} - [No text]": row["comment_id"]
-        for row in discussion_posts
-    }
+            f"Post #{row['comment_id']} - {row['text'][:100]}..." if row.get("text") else f"Post #{row['comment_id']} - [No text]": row["comment_id"]
+            for row in discussion_posts
+        }
 
-        selected_post_label = st.selectbox("Select a Discussion Post", list(post_options.keys()))
+        selected_post_label = st.selectbox("Select a Discussion Post or Reply", list(post_options.keys()))
         selected_post_id = post_options[selected_post_label]
 
-        # Show full post content
-        # Updated query to use the correct property name (body instead of text)
+        # Show full post/reply content
         post_details = run_query("""
             MATCH (c)
             WHERE id(c) = $comment_id
@@ -115,7 +117,7 @@ if selected_topic:
         st.markdown("### 📝 Full Post Content")
         st.write(post_details[0]["full_text"] if post_details else "No content found.")
 
-        # Show arguments extracted from this post
+        # Show arguments for this comment/reply
         extracted_arguments = run_query("""
             MATCH (a:Argument)-[:EXTRACTED_FROM]->(c)
             WHERE id(c) = $comment_id
@@ -128,9 +130,10 @@ if selected_topic:
             for arg in extracted_arguments:
                 st.markdown(f"- **{arg['Stance']}**: {arg['ArgumentText']}")
         else:
-            st.info("No arguments were extracted from this post.")
+            st.info("No arguments were extracted from this post or reply.")
     else:
-        st.info("No posts found for this topic.")
+        st.info("No posts or replies found for this topic.")
+
 
     st.divider()
     st.header("Explore Further")
