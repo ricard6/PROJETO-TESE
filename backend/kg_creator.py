@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from typing import Any, Dict, List
 import logging
 
+
 # Load environment variables
 load_dotenv()
 
@@ -100,6 +101,38 @@ argument_extraction_prompt = PromptTemplate(
 # Build the argument extraction chain
 argument_chain = LLMChain(llm=llm, prompt=argument_extraction_prompt)
 
+argument_grouping_prompt = PromptTemplate(
+    input_variables=["arguments"],
+    template="""
+    You are an AI system trained to group semantically similar arguments from Reddit discussions.
+
+    ### Objective:
+    Given a list of arguments, group those that express the same core idea — even if they are worded differently. For each group, write a **single summary statement** that captures the shared meaning of the grouped arguments. Then list all the original arguments that belong in that group.
+
+    ### Instructions:
+    - The summary should be **clear, detailed, and self-contained**, and reflect what all grouped arguments are trying to say.
+    - Only group arguments that truly express the same fundamental idea or reasoning. Do not group arguments with conflicting stances.
+    - Use the original argument wording in the grouped list — do not rewrite them.
+    - If an argument expresses a unique idea not shared by others, place it in its own group with an appropriate summary.
+
+    ### Format:
+
+    Group: <summary of the shared idea>
+    - <original argument 1>
+    - <original argument 2>
+    ...
+
+    Group: <another shared idea>
+    - <original argument 3>
+    ...
+
+    ### Arguments:
+    {arguments}
+    """
+)
+
+argument_grouping_chain = LLMChain(llm=llm, prompt=argument_grouping_prompt)
+
 # Pydantic model
 class KGRequest(BaseModel):
     thread_data: Dict[str, Any]
@@ -176,6 +209,9 @@ def create_knowledge_graph(thread_data: dict) -> dict:
                             session.execute_write(connect_argument_to_reply, arg, reply["id"], discussion_id)
                             argument_count += 1
 
+        group_arguments_by_semantic_similarity(discussion_id)
+    
+
     return {
         "status": "success",
         "discussion_id": discussion_id,
@@ -186,6 +222,55 @@ def create_knowledge_graph(thread_data: dict) -> dict:
             "arguments": argument_count
         }
     }
+
+
+def group_arguments_by_semantic_similarity(discussion_id: str):
+    # Step 1: Fetch all arguments from the discussion
+    with driver.session() as session:
+        result = session.run("""
+            MATCH (a:Argument {discussion_id: $discussion_id})
+            RETURN a.text AS text
+        """, discussion_id=discussion_id)
+        arguments = [record["text"] for record in result if record["text"].strip()]
+
+    if not arguments:
+        return
+
+    # Step 2: Prepare arguments for the LLM prompt
+    argument_text = "\n".join([f"- {arg}" for arg in arguments])
+    
+    # Step 3: Run the LLM chain using your updated prompt
+    response = argument_grouping_chain.run(arguments=argument_text)
+
+    # Step 4: Parse the LLM response
+    current_group = None
+    group_map = {}  # {group_summary: [arg1, arg2, ...]}
+    for line in response.splitlines():
+        if line.strip().startswith("Group:"):
+            current_group = line.replace("Group:", "").strip()
+            group_map[current_group] = []
+        elif line.strip().startswith("-") and current_group:
+            arg = line.strip().lstrip("-").strip()
+            group_map[current_group].append(arg)
+
+    # Step 5: Write group nodes and connect arguments
+    with driver.session() as session:
+        for group_summary, arg_list in group_map.items():
+            # Create group node
+            session.run("""
+                MERGE (g:ArgumentGroup {summary: $summary})
+                SET g.updated_at = datetime()
+            """, summary=group_summary)
+
+            for arg in arg_list:
+                # Link argument to its group
+                session.run("""
+                    MATCH (a:Argument {text: $text, discussion_id: $discussion_id})
+                    MATCH (g:ArgumentGroup {summary: $summary})
+                    MERGE (a)-[:HAS_GROUP]->(g)
+                """, text=arg, discussion_id=discussion_id, summary=group_summary)
+
+
 
 # Cypher helpers
 def check_existing_discussion_by_url(tx, url: str):

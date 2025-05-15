@@ -2,6 +2,7 @@ import streamlit as st
 from neo4j import GraphDatabase
 import os
 from dotenv import load_dotenv
+import pandas as pd
 
 # Load Neo4j credentials
 load_dotenv()
@@ -39,11 +40,13 @@ st.markdown(f"### {selected_topic}")
 if selected_topic:
     # Get counts by stance for this topic using the working query
     stance_counts = run_query("""
-        MATCH (c)-[:SUPPORTS|OPPOSES|NEUTRAL]->(t:Topic {title: $title})
-        WITH c
-        MATCH (a:Argument)-[:EXTRACTED_FROM]->(c)
+        MATCH (t:Topic {title: $title})
+        MATCH (a:Argument)-[:EXTRACTED_FROM]->(n)
+        WHERE (n:Comment)-[:SUPPORTS|OPPOSES|NEUTRAL]->(t)
+        OR (n:Reply)-[:REPLY_TO]->(:Comment)-[:SUPPORTS|OPPOSES|NEUTRAL]->(t)
         RETURN a.stance AS Stance, count(*) AS Count
-    """, {"title": selected_topic})
+    """, 
+    {"title": selected_topic})
     
     # Initialize count variables
     supporting_count = 0
@@ -140,18 +143,41 @@ if selected_topic:
 
     # Define queries that can be applied to the selected topic
     query_options = {
-        "Topic Details": {
-            "query": """
-                MATCH (t:Topic {title: $title})
-                RETURN t.title AS Title, t.url AS URL
-            """
-        },
         "List of Arguments by Stance": {
             "query": """
-                MATCH (c)-[:SUPPORTS|OPPOSES|NEUTRAL]->(t:Topic {title: $title})
-                WITH c
-                MATCH (a:Argument)-[:EXTRACTED_FROM]->(c)
+                MATCH (t:Topic {title: $title})
+                MATCH (a:Argument)-[:EXTRACTED_FROM]->(n)
+                WHERE (n:Comment)-[:SUPPORTS|OPPOSES|NEUTRAL]->(t)
+                OR (n:Reply)-[:REPLY_TO]->(:Comment)-[:SUPPORTS|OPPOSES|NEUTRAL]->(t)
                 RETURN a.text AS Argument, a.stance AS Stance
+            """
+        },
+        "Argument Groups by Popularity": {
+            "query": """
+                MATCH (t:Topic {title: $title})
+                MATCH (a:Argument)-[:EXTRACTED_FROM]->(n)
+                WHERE (n:Comment)-[:SUPPORTS|OPPOSES|NEUTRAL]->(t)
+                OR (n:Reply)-[:REPLY_TO]->(:Comment)-[:SUPPORTS|OPPOSES|NEUTRAL]->(t)
+                MATCH (a)-[:HAS_GROUP]->(g:ArgumentGroup)
+                RETURN 
+                g.summary AS GroupSummary,
+                count(a) AS ArgumentCount
+                ORDER BY ArgumentCount DESC
+            """
+        },
+        "Argument Groups by Popularity (with Arguments)": {
+            "query": """
+                MATCH (t:Topic {title: $title})
+                MATCH (a:Argument)-[:EXTRACTED_FROM]->(n)
+                WHERE (n:Comment)-[:SUPPORTS|OPPOSES|NEUTRAL]->(t)
+                OR (n:Reply)-[:REPLY_TO]->(:Comment)-[:SUPPORTS|OPPOSES|NEUTRAL]->(t)
+                MATCH (a)-[:HAS_GROUP]->(g:ArgumentGroup)
+                RETURN 
+                g.summary AS GroupSummary,
+                collect({text: a.text, stance: a.stance}) AS Arguments,
+                count(a) AS ArgumentCount
+                ORDER BY ArgumentCount DESC
+
             """
         },
         "Replies to Supporting Comments": {
@@ -184,6 +210,12 @@ if selected_topic:
                 ORDER BY c.score DESC
                 LIMIT 10
             """
+        },
+        "Discussion url": {
+            "query": """
+                MATCH (t:Topic {title: $title})
+                RETURN t.title AS Title, t.url AS URL
+            """
         }
     }
 
@@ -196,9 +228,11 @@ if selected_topic:
 
     if st.button("Run Query"):
         results = run_query(selected_query["query"], parameters)
+        
         if results:
             st.write(f"### Results for '{selected_topic}':")
 
+            # Case: replies + parent comment display
             if "Replies" in results[0] and "ParentComment" in results[0]:
                 for i, item in enumerate(results, 1):
                     with st.expander(f"Comment {i}"):
@@ -212,8 +246,29 @@ if selected_topic:
                                 st.text(f"Reply #{j}:\n{reply}")
                         else:
                             st.write("No replies found.")
+
+            # Case: grouped arguments with stance info (list of dicts)
+            elif isinstance(results[0].get("Arguments"), list) and isinstance(results[0]["Arguments"][0], dict):
+                # Flatten the grouped results into rows
+                rows = []
+                for group in results:
+                    group_summary = group["GroupSummary"]
+                    arguments = group.get("Arguments", [])
+                    for arg in arguments:
+                        rows.append({
+                            "Argument Group": group_summary,
+                            "Argument Text": arg["text"],
+                            "Stance": arg["stance"]
+                        })
+
+                # Create DataFrame and display
+                df = pd.DataFrame(rows)
+                st.dataframe(df, use_container_width=True)
+
+            # Fallback: flat results that fit in a table
             else:
                 st.dataframe(results, use_container_width=True)
+
         else:
             st.info(f"No results found for '{selected_topic}' with the selected query.")
 
