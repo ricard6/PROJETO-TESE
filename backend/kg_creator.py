@@ -102,29 +102,28 @@ argument_extraction_prompt = PromptTemplate(
 argument_chain = LLMChain(llm=llm, prompt=argument_extraction_prompt)
 
 argument_grouping_prompt = PromptTemplate(
-    input_variables=["arguments"],
+    input_variables=["stance", "arguments"],
     template="""
     You are an AI system trained to group semantically similar arguments from Reddit discussions.
 
     ### Objective:
-    Given a list of arguments, group those that express the same core idea — even if they are worded differently. For each group, write a **single summary statement** that captures the shared meaning of the grouped arguments. Then list all the original arguments that belong in that group.
+    Given a list of arguments that all share the same stance ("{stance}") toward a topic, group those that express the same core idea — even if worded differently. For each group, write a single, clear summary that captures what all grouped arguments are trying to say.
 
     ### Instructions:
-    - The summary should be **clear, detailed, and self-contained**, and reflect what all grouped arguments are trying to say.
-    - Only group arguments that truly express the same fundamental idea or reasoning. Do not group arguments with conflicting stances.
-    - Use the original argument wording in the grouped list — do not rewrite them.
-    - If an argument expresses a unique idea not shared by others, place it in its own group with an appropriate summary.
+    - All arguments are either FOR, AGAINST, or NEUTRAL with respect to the topic.
+    - Only group arguments that express the same reasoning or point.
+    - Do NOT merge arguments that express different ideas, even if they are related.
+    - Use the exact original argument wording — do not rewrite or paraphrase.
+    - If an argument doesn’t belong in any group, place it in its own group.
 
     ### Format:
 
-    Group: <summary of the shared idea>
+    Group: <summary of shared idea>
     - <original argument 1>
     - <original argument 2>
-    ...
 
     Group: <another shared idea>
     - <original argument 3>
-    ...
 
     ### Arguments:
     {arguments}
@@ -209,7 +208,7 @@ def create_knowledge_graph(thread_data: dict) -> dict:
                             session.execute_write(connect_argument_to_reply, arg, reply["id"], discussion_id)
                             argument_count += 1
 
-        group_arguments_by_semantic_similarity(discussion_id)
+        group_arguments_by_stance(discussion_id)
     
 
     return {
@@ -224,51 +223,53 @@ def create_knowledge_graph(thread_data: dict) -> dict:
     }
 
 
-def group_arguments_by_semantic_similarity(discussion_id: str):
-    # Step 1: Fetch all arguments from the discussion
-    with driver.session() as session:
-        result = session.run("""
-            MATCH (a:Argument {discussion_id: $discussion_id})
-            RETURN a.text AS text
-        """, discussion_id=discussion_id)
-        arguments = [record["text"] for record in result if record["text"].strip()]
-
-    if not arguments:
+def group_arguments_by_stance(discussion_id: str):
+    if not argument_grouping_chain or not driver:
         return
 
-    # Step 2: Prepare arguments for the LLM prompt
-    argument_text = "\n".join([f"- {arg}" for arg in arguments])
-    
-    # Step 3: Run the LLM chain using your updated prompt
-    response = argument_grouping_chain.run(arguments=argument_text)
-
-    # Step 4: Parse the LLM response
-    current_group = None
-    group_map = {}  # {group_summary: [arg1, arg2, ...]}
-    for line in response.splitlines():
-        if line.strip().startswith("Group:"):
-            current_group = line.replace("Group:", "").strip()
-            group_map[current_group] = []
-        elif line.strip().startswith("-") and current_group:
-            arg = line.strip().lstrip("-").strip()
-            group_map[current_group].append(arg)
-
-    # Step 5: Write group nodes and connect arguments
     with driver.session() as session:
-        for group_summary, arg_list in group_map.items():
-            # Create group node
-            session.run("""
-                MERGE (g:ArgumentGroup {summary: $summary})
-                SET g.updated_at = datetime()
-            """, summary=group_summary)
+        # Loop through each stance
+        for stance in ["FOR", "AGAINST", "NEUTRAL"]:
+            # Get all arguments for this stance
+            result = session.run("""
+                MATCH (a:Argument)
+                WHERE a.stance = $stance AND a.discussion_id = $discussion_id
+                RETURN a.text AS text
+            """, stance=stance, discussion_id=discussion_id)
 
-            for arg in arg_list:
-                # Link argument to its group
+            arguments = [record["text"] for record in result if record["text"].strip()]
+            if not arguments:
+                continue
+
+            # Build prompt input
+            argument_block = "\n".join([f"- {arg}" for arg in arguments])
+            response = argument_grouping_chain.run(arguments=argument_block, stance=stance)
+
+            # Parse and process results
+            current_group = None
+            group_map = {}
+            for line in response.splitlines():
+                if line.strip().startswith("Group:"):
+                    current_group = line.replace("Group:", "").strip()
+                    group_map[current_group] = []
+                elif line.strip().startswith("-") and current_group:
+                    arg = line.strip().lstrip("-").strip()
+                    group_map[current_group].append(arg)
+
+            # Write group and links to database
+            for group_summary, arg_list in group_map.items():
                 session.run("""
-                    MATCH (a:Argument {text: $text, discussion_id: $discussion_id})
-                    MATCH (g:ArgumentGroup {summary: $summary})
-                    MERGE (a)-[:HAS_GROUP]->(g)
-                """, text=arg, discussion_id=discussion_id, summary=group_summary)
+                    MERGE (g:ArgumentGroup {summary: $summary, stance: $stance})
+                    SET g.updated_at = datetime()
+                """, summary=group_summary, stance=stance)
+
+                for arg in arg_list:
+                    session.run("""
+                        MATCH (a:Argument {text: $text, discussion_id: $discussion_id})
+                        MATCH (g:ArgumentGroup {summary: $summary, stance: $stance})
+                        MERGE (a)-[:HAS_GROUP]->(g)
+                    """, text=arg, discussion_id=discussion_id, summary=group_summary, stance=stance)
+
 
 
 

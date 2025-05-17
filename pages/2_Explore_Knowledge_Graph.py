@@ -161,23 +161,8 @@ if selected_topic:
                 MATCH (a)-[:HAS_GROUP]->(g:ArgumentGroup)
                 RETURN 
                 g.summary AS GroupSummary,
-                count(a) AS ArgumentCount
-                ORDER BY ArgumentCount DESC
-            """
-        },
-        "Argument Groups by Popularity (with Arguments)": {
-            "query": """
-                MATCH (t:Topic {title: $title})
-                MATCH (a:Argument)-[:EXTRACTED_FROM]->(n)
-                WHERE (n:Comment)-[:SUPPORTS|OPPOSES|NEUTRAL]->(t)
-                OR (n:Reply)-[:REPLY_TO]->(:Comment)-[:SUPPORTS|OPPOSES|NEUTRAL]->(t)
-                MATCH (a)-[:HAS_GROUP]->(g:ArgumentGroup)
-                RETURN 
-                g.summary AS GroupSummary,
-                collect({text: a.text, stance: a.stance}) AS Arguments,
-                count(a) AS ArgumentCount
-                ORDER BY ArgumentCount DESC
-
+                a.text AS ArgumentText,
+                a.stance AS Stance
             """
         },
         "Replies to Supporting Comments": {
@@ -221,56 +206,75 @@ if selected_topic:
 
     # After topic selection, allow query selection
     selected_query_label = st.selectbox("Choose a Query to Run", list(query_options.keys()))
-    selected_query = query_options[selected_query_label]
+
 
     # Parameters already set based on topic selection
     parameters = {"title": selected_topic}
 
+    # Only show display mode option if the selected query is the one you want
+    if selected_query_label == "Argument Groups by Popularity":
+        display_mode = st.radio("Display Mode", ["Group Overview", "Full Detail (show every argument)"])
+    else:
+        display_mode = None
+
     if st.button("Run Query"):
-        results = run_query(selected_query["query"], parameters)
-        
+        results = run_query(query_options[selected_query_label]["query"], parameters)
+
         if results:
             st.write(f"### Results for '{selected_topic}':")
 
-            # Case: replies + parent comment display
-            if "Replies" in results[0] and "ParentComment" in results[0]:
-                for i, item in enumerate(results, 1):
-                    with st.expander(f"Comment {i}"):
-                        st.markdown("**🧠 Parent Comment:**")
-                        st.markdown(item["ParentComment"])
+            if selected_query_label == "Argument Groups by Popularity":
+                if display_mode == "Group Overview":
+                    overview_data = {}
+                    for row in results:
+                        key = (row.get("GroupSummary"), row.get("Stance"))
+                        overview_data[key] = overview_data.get(key, 0) + 1
 
-                        replies = item.get("Replies", [])
-                        if replies:
-                            st.markdown("**💬 Replies:**")
-                            for j, reply in enumerate(replies, 1):
-                                st.text(f"Reply #{j}:\n{reply}")
-                        else:
-                            st.write("No replies found.")
+                    overview_rows = [
+                        {"Group Summary": k[0], "Stance": k[1], "Argument Count": v}
+                        for k, v in overview_data.items()
+                    ]
+                    st.dataframe(pd.DataFrame(overview_rows), use_container_width=True)
 
-            # Case: grouped arguments with stance info (list of dicts)
-            elif isinstance(results[0].get("Arguments"), list) and isinstance(results[0]["Arguments"][0], dict):
-                # Flatten the grouped results into rows
-                rows = []
-                for group in results:
-                    group_summary = group["GroupSummary"]
-                    arguments = group.get("Arguments", [])
-                    for arg in arguments:
-                        rows.append({
-                            "Argument Group": group_summary,
-                            "Argument Text": arg["text"],
-                            "Stance": arg["stance"]
-                        })
+                elif display_mode == "Full Detail (show every argument)":
+                    detail_rows = [
+                        {
+                            "Group Summary": row.get("GroupSummary", ""),
+                            "Argument Text": row.get("ArgumentText", ""),
+                            "Stance": row.get("Stance", "")
+                        }
+                        for row in results if row.get("ArgumentText")
+                    ]
 
-                # Create DataFrame and display
-                df = pd.DataFrame(rows)
-                st.dataframe(df, use_container_width=True)
+                    if detail_rows:
+                        st.dataframe(pd.DataFrame(detail_rows), use_container_width=True)
+                    else:
+                        st.info("No arguments found to display.")
 
-            # Fallback: flat results that fit in a table
+            elif selected_query_label == "Replies to Supporting Comments" or "Replies to Opposing Comments":
+                if "Replies" in results[0] and "ParentComment" in results[0]:
+                    for i, item in enumerate(results, 1):
+                        with st.expander(f"Comment {i}"):
+                            st.markdown("**🧠 Parent Comment:**")
+                            st.markdown(item["ParentComment"])
+
+                            replies = item.get("Replies", [])
+                            if replies:
+                                st.markdown("**💬 Replies:**")
+                                for j, reply in enumerate(replies, 1):
+                                    st.markdown(f"**Reply #{j}:**\n{reply}")
+                                    st.divider()
+                            else:
+                                st.write("No replies found.")
+
             else:
+                # Fallback for other query types
                 st.dataframe(results, use_container_width=True)
 
         else:
             st.info(f"No results found for '{selected_topic}' with the selected query.")
+
+
 
 
 
