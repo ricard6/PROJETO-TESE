@@ -1,5 +1,4 @@
 from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
 from langchain_openai import ChatOpenAI
 from typing import Dict, List
 import os
@@ -35,20 +34,16 @@ summarizer_prompt = PromptTemplate(
 )
 
 # Create summarization chain
-summary_chain = LLMChain(
-    llm=summarizer,
-    prompt=summarizer_prompt
-)
+summary_chain = summarizer_prompt | summarizer
 
 def summarize_grouped_comments(grouped_comments: Dict[str, List[str]]) -> Dict:
     """Summarizes FOR, AGAINST, and NEUTRAL comments separately."""
-    
     summaries = {}
 
     for stance, comments in grouped_comments.items():
         if comments:
             summary_input = {"comments": "\n".join(comments)}
-            summaries[stance] = summary_chain.run(summary_input)
+            summaries[stance] = summary_chain.invoke(summary_input).content.strip()
         else:
             summaries[stance] = "No significant arguments found."
 

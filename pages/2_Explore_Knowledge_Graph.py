@@ -230,10 +230,15 @@ if selected_topic:
                         key = (row.get("GroupSummary"), row.get("Stance"))
                         overview_data[key] = overview_data.get(key, 0) + 1
 
-                    overview_rows = [
+                    overview_rows = sorted (
+                        [
                         {"Group Summary": k[0], "Stance": k[1], "Argument Count": v}
                         for k, v in overview_data.items()
-                    ]
+                        ],
+                        key=lambda x: x["Argument Count"],
+                        reverse=True
+                    )
+                    
                     st.dataframe(pd.DataFrame(overview_rows), use_container_width=True)
 
                 elif display_mode == "Full Detail (show every argument)":
@@ -251,7 +256,7 @@ if selected_topic:
                     else:
                         st.info("No arguments found to display.")
 
-            elif selected_query_label == "Replies to Supporting Comments" or "Replies to Opposing Comments":
+            elif selected_query_label in ["Replies to Supporting Comments", "Replies to Opposing Comments"]:
                 if "Replies" in results[0] and "ParentComment" in results[0]:
                     for i, item in enumerate(results, 1):
                         with st.expander(f"Comment {i}"):

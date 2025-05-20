@@ -1,6 +1,5 @@
 from pydantic import BaseModel
 from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
 from langchain_openai import ChatOpenAI
 import os
 
@@ -47,18 +46,15 @@ stance_prompt = PromptTemplate(
 )
 
 # Create LangChain chain for stance classification
-stance_chain = LLMChain(
-    llm=stance_model,
-    prompt=stance_prompt
-)
+stance_chain = stance_prompt | stance_model
 
 # Function to classify stance
 def stance_classifier(request: StanceClassificationRequest):
-    response = stance_chain.run(
-        thread_title=request.thread_title,
-        thread_selftext=request.thread_selftext,
-        identified_topic=request.identified_topic,
-        comment_body=request.comment_body
-    )
-    
-    return {"stance": response.strip()}
+    response = stance_chain.invoke({
+        "thread_title": request.thread_title,
+        "thread_selftext": request.thread_selftext,
+        "identified_topic": request.identified_topic,
+        "comment_body": request.comment_body
+    })
+
+    return {"stance": response.content.strip()}

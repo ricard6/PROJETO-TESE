@@ -3,7 +3,6 @@ import os
 import uuid
 from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 from typing import Any, Dict, List
@@ -99,7 +98,7 @@ argument_extraction_prompt = PromptTemplate(
 )
 
 # Build the argument extraction chain
-argument_chain = LLMChain(llm=llm, prompt=argument_extraction_prompt)
+argument_chain = argument_extraction_prompt | llm
 
 argument_grouping_prompt = PromptTemplate(
     input_variables=["stance", "arguments"],
@@ -130,7 +129,7 @@ argument_grouping_prompt = PromptTemplate(
     """
 )
 
-argument_grouping_chain = LLMChain(llm=llm, prompt=argument_grouping_prompt)
+argument_grouping_chain = argument_grouping_prompt | llm
 
 # Pydantic model
 class KGRequest(BaseModel):
@@ -138,10 +137,12 @@ class KGRequest(BaseModel):
 
 # Argument extraction
 def extract_arguments(text: str, topic: str) -> List[str]:
-    response = argument_chain.run(text=text, topic=topic)
-    if "No clear arguments found" in response:
+    response = argument_chain.invoke({"text": text, "topic": topic})
+    content = response.content.strip()  # ✅ get actual string
+
+    if "No clear arguments found" in content:
         return []
-    return [line.split(" ", 1)[-1].strip() for line in response.strip().split('\n') if line.strip()]
+    return [line.split(" ", 1)[-1].strip() for line in content.split('\n') if line.strip()]
 
 # Knowledge graph creation
 def create_knowledge_graph(thread_data: dict) -> dict:
@@ -243,12 +244,13 @@ def group_arguments_by_stance(discussion_id: str):
 
             # Build prompt input
             argument_block = "\n".join([f"- {arg}" for arg in arguments])
-            response = argument_grouping_chain.run(arguments=argument_block, stance=stance)
+            response = argument_grouping_chain.invoke({"arguments": argument_block, "stance": stance})
+            content = response.content.strip()
 
             # Parse and process results
             current_group = None
             group_map = {}
-            for line in response.splitlines():
+            for line in content.splitlines():
                 if line.strip().startswith("Group:"):
                     current_group = line.replace("Group:", "").strip()
                     group_map[current_group] = []
