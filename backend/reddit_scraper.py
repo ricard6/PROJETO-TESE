@@ -142,9 +142,9 @@ def process_comments(comments_data, level=0, parent_body=None):
         # Apply citation formatting to comment body
         formatted_body = process_text(body_text)  
 
-        # Build comment object
+        # Build comment object - use original Reddit ID directly
         comment_obj = {
-            'id': comment_data.get('id', ''),
+            'id': comment_data.get('id', ''),  # Original Reddit ID
             'author': comment_data.get('author', ''),
             'created_utc': datetime.fromtimestamp(comment_data.get('created_utc', 0)).strftime('%Y-%m-%d %H:%M:%S') if comment_data.get('created_utc') else None,
             'body': formatted_body,
@@ -157,11 +157,63 @@ def process_comments(comments_data, level=0, parent_body=None):
         # If the comment has replies, process them recursively
         if comment_data.get('replies') and comment_data['replies'] != '':
             replies_data = comment_data['replies']['data']['children']
-            comment_obj['replies'] = process_comments(replies_data, level + 1, formatted_body)
+            comment_obj['replies'] = process_replies(replies_data, comment_data.get('id', ''), level + 1, formatted_body)
 
         processed.append(comment_obj)
 
     return processed
 
 
+def process_replies(replies_data, parent_comment_id, level=1, parent_body=None):
+    """
+    Process replies keeping original Reddit IDs for consistency.
+    
+    Args:
+        replies_data (list): List of reply dicts from Reddit JSON.
+        parent_comment_id (str): The ID of the parent comment.
+        level (int): Current nesting level.
+        parent_body (str): The body text of the parent comment.
+        
+    Returns:
+        list: A list of processed reply dicts with original Reddit IDs.
+    """
+    processed_replies = []
 
+    for j, reply in enumerate(replies_data):
+        if reply.get('kind') != 't1':
+            continue
+
+        reply_data = reply['data']
+        body_text = reply_data.get('body', '').strip()
+
+        # Skip AutoModerator, system messages, deleted, or removed comments
+        if reply_data.get('author') == "AutoModerator" or body_text.lower() in ["[deleted]", "[removed]"]:
+            continue
+
+        # Apply citation formatting to reply body
+        formatted_body = process_text(body_text)
+
+        # Use original Reddit ID - let kg_creator handle unique ID generation consistently
+        original_reply_id = reply_data.get('id', '')
+
+        # Build reply object with original Reddit ID
+        reply_obj = {
+            'id': original_reply_id,  # Keep original Reddit ID
+            'parent_comment_id': parent_comment_id,  # Track parent relationship
+            'author': reply_data.get('author', ''),
+            'created_utc': datetime.fromtimestamp(reply_data.get('created_utc', 0)).strftime('%Y-%m-%d %H:%M:%S') if reply_data.get('created_utc') else None,
+            'body': formatted_body,
+            'score': reply_data.get('score', 0),
+            'level': level,
+            'parent_body': parent_body,
+            'replies': []
+        }
+
+        # If this reply has nested replies, process them recursively
+        if reply_data.get('replies') and reply_data['replies'] != '':
+            nested_replies_data = reply_data['replies']['data']['children']
+            reply_obj['replies'] = process_replies(nested_replies_data, original_reply_id, level + 1, formatted_body)
+
+        processed_replies.append(reply_obj)
+
+    return processed_replies

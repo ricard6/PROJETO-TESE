@@ -182,21 +182,19 @@ elif st.session_state.page == 'incremental_analysis':
 
         grouped_comments = {"FOR": [], "AGAINST": [], "NEUTRAL": []}
         all_classified_bodies = {"FOR": [], "AGAINST": [], "NEUTRAL": []}
+        all_replies = []  # <-- Move here, outside the loop
 
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        # Loop to extract top 5 replies to comments and classify stance
         for i, comment in enumerate(top_comments):
             sorted_replies = sorted(comment['replies'], key=lambda x: x['score'], reverse=True)[:5]
             parent_context = f"Parent Comment: {comment.get('parent_body', 'N/A')}\n\n" if 'parent_body' in comment else ""
 
-            # Update progress
             progress = (i + 1) / len(top_comments)
             progress_bar.progress(progress)
             status_text.text(f"Classifying comment {i+1}/{len(top_comments)}")
 
-            # Classify comment stance
             stance_response = requests.post(
                 stanceClassifier_endpoint,
                 json={
@@ -210,7 +208,6 @@ elif st.session_state.page == 'incremental_analysis':
             if stance_response.status_code == 200:
                 stance_result = stance_response.json().get("stance", "NEUTRAL")
 
-                # Classify replies stance
                 classified_replies = []
                 for reply in sorted_replies:
                     reply_stance_response = requests.post(
@@ -224,7 +221,6 @@ elif st.session_state.page == 'incremental_analysis':
                     )
                     reply_stance = reply_stance_response.json().get("stance", "NEUTRAL") if reply_stance_response.status_code == 200 else "NEUTRAL"
 
-                    # Create and store a dictionary for each reply
                     classified_replies.append({
                         "author": reply["author"],
                         "score": reply["score"],
@@ -232,10 +228,11 @@ elif st.session_state.page == 'incremental_analysis':
                         "stance": reply_stance
                     })
 
-                    # Add the reply body to the stance for summarization
                     all_classified_bodies[reply_stance].append(reply["body"])
-                
-                # Organize comments by stance
+
+                # Append replies of this comment to the global all_replies list
+                all_replies.extend(classified_replies)
+
                 grouped_comments[stance_result].append({
                     "author": comment["author"],
                     "score": comment["score"],
@@ -243,28 +240,35 @@ elif st.session_state.page == 'incremental_analysis':
                     "replies": classified_replies
                 })
 
-                # Add comment text to the set of texts for summarization
                 all_classified_bodies[stance_result].append(comment["body"])
-        
+
         progress_bar.empty()
         status_text.empty()
-        
+
         process_state["grouped_comments"] = grouped_comments
         process_state["all_classified_bodies"] = all_classified_bodies
 
         # Calculate stance distribution
-        stance_counts = {k: len(grouped_comments[k]) for k in grouped_comments}
-        total_comments = sum(stance_counts.values())
+        stance_counts = {"FOR": 0, "AGAINST": 0, "NEUTRAL": 0}
 
-        if total_comments > 0:
-            stance_percentages = {
-                k: (stance_counts[k] / total_comments) * 100 for k in stance_counts
-            }
-        else:
-            stance_percentages = {k: 0 for k in grouped_comments}
-            
+        # Count stance from comments
+        for stance in grouped_comments:
+            stance_counts[stance] += len(grouped_comments[stance])
+
+        # Count stance from **all** replies (not just last comment’s)
+        for reply in all_replies:
+            reply_stance = reply.get("stance")
+            if reply_stance in stance_counts:
+                stance_counts[reply_stance] += 1
+
+        total = sum(stance_counts.values())
+        stance_percentages = {
+            stance: (count / total) * 100 if total > 0 else 0
+            for stance, count in stance_counts.items()
+        }
+
         process_state["stance_percentages"] = stance_percentages
-
+            
     # Display stance distribution as soon as we have it
     if process_state["stance_percentages"]:
         stance_percentages = process_state["stance_percentages"]

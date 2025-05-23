@@ -52,7 +52,7 @@ argument_extraction_prompt = PromptTemplate(
 
     ### INSTRUCTIONS:
     - Extract arguments that include **reasoning, causal relationships, or factual claims**.
-    - Each argument must be **self-contained**: don't use pronouns like “this” or “it” without defining them.
+    - Each argument must be **self-contained**: don't use pronouns like "this" or "it" without defining them.
     - **Avoid repeating the same idea** in different words.
     - Do **not** extract vague, general statements or insults.
     - If no clear arguments exist, return: **"No clear arguments found."**
@@ -106,22 +106,24 @@ argument_grouping_prompt = PromptTemplate(
     You are an AI system trained to group semantically similar arguments from Reddit discussions.
 
     ### Objective:
-    Given a list of arguments that all share the same stance ("{stance}") toward a topic, group those that express the same core idea — even if worded differently. For each group, write a single, clear summary that captures what all grouped arguments are trying to say.
+    Given a list of arguments that all share the same stance ("{stance}") toward a topic, group those that express the same specific idea — even if they use different wording. For each group, write a **detailed and self-contained summary** that explains the **shared claim** and the **main reasoning** behind it.
 
     ### Instructions:
-    - All arguments are either FOR, AGAINST, or NEUTRAL with respect to the topic.
-    - Only group arguments that express the same reasoning or point.
-    - Do NOT merge arguments that express different ideas, even if they are related.
-    - Use the exact original argument wording — do not rewrite or paraphrase.
-    - If an argument doesn’t belong in any group, place it in its own group.
+    - The summary must make it **completely clear what the core argument is** without reading the individual comments.
+    - Be specific. Clearly express what the grouped users believe or argue, and **why** they argue it.
+    - Do NOT use vague generalizations like "Criticism of the left" or "Concerns about corruption."
+    - Avoid summarizing with abstract categories — instead, explain the **actual position** being taken.
+    - Only group arguments that express the same idea. Do not merge arguments that are different, even if related.
+    - Use the original wording for the bullet points. Do not rewrite or paraphrase them.
+    - If an argument doesn't belong in a group, place it alone with its own summary.
 
     ### Format:
 
-    Group: <summary of shared idea>
+    Group: <detailed explanation of the shared argument and reasoning>
     - <original argument 1>
     - <original argument 2>
 
-    Group: <another shared idea>
+    Group: <another detailed explanation>
     - <original argument 3>
 
     ### Arguments:
@@ -144,6 +146,30 @@ def extract_arguments(text: str, topic: str) -> List[str]:
         return []
     return [line.split(" ", 1)[-1].strip() for line in content.split('\n') if line.strip()]
 
+# Debug function to see what's in the database
+def debug_existing_content(discussion_id):
+    """Debug function to see what content exists in the database"""
+    with driver.session() as session:
+        # Check comments
+        comment_result = session.run("""
+            MATCH (c:Comment {discussion_id: $discussion_id})
+            RETURN c.id AS comment_id
+            ORDER BY c.id
+        """, discussion_id=discussion_id)
+        
+        comments = [record["comment_id"] for record in comment_result]
+        logger.info(f"Existing comments: {comments}")
+        
+        # Check replies
+        reply_result = session.run("""
+            MATCH (r:Reply {discussion_id: $discussion_id})
+            RETURN r.id AS reply_id, r.parent_comment_id AS parent_id
+            ORDER BY r.id
+        """, discussion_id=discussion_id)
+        
+        replies = [(record["reply_id"], record["parent_id"]) for record in reply_result]
+        logger.info(f"Existing replies: {replies}")
+
 # Knowledge graph creation
 def create_knowledge_graph(thread_data: dict) -> dict:
     # Get post title and URL (used as unique discussion ID)
@@ -152,6 +178,7 @@ def create_knowledge_graph(thread_data: dict) -> dict:
     comment_count = 0
     reply_count = 0
     argument_count = 0
+    new_content_added = False  # Track if any new content was added
 
     with driver.session() as session:
         # Check if the thread already exists in the graph
@@ -160,20 +187,32 @@ def create_knowledge_graph(thread_data: dict) -> dict:
         discussion_id = existing if existing else str(uuid.uuid4())
         session.execute_write(merge_topic, topic_title, discussion_id, thread_url)
 
+        # Debug: Show what exists before processing
+        logger.info(f"Processing discussion: {discussion_id}")
+        debug_existing_content(discussion_id)
+
         # Loop through each stance category: FOR, AGAINST, NEUTRAL
         for stance in ["FOR", "AGAINST", "NEUTRAL"]:
             for i, comment in enumerate(thread_data["classified_comments"].get(stance, [])):
-                # Ensure each comment has a unique ID
-                if "id" not in comment or not comment["id"]:
+                # Ensure each comment has a unique ID - use original Reddit ID
+                original_comment_id = comment.get("id", "")
+                if not original_comment_id:
                     comment["id"] = f"comment_{stance}_{i}"
+                else:
+                    comment["id"] = original_comment_id
+                    
                 comment.update({"discussion_id": discussion_id})
 
                 # Check if the comment is already in the database
                 comment_exists = session.execute_read(check_comment_exists, comment["id"], discussion_id)
+                logger.info(f"Comment {comment['id']} exists: {comment_exists}")
+                
                 session.execute_write(merge_comment, comment)
                 
                 # Only process new comments
                 if not comment_exists:
+                    logger.info(f"Adding NEW comment: {comment['id']}")
+                    new_content_added = True
                     comment_count += 1
                     session.execute_write(connect_comment_to_topic, comment["id"], topic_title, stance, discussion_id)
 
@@ -187,17 +226,35 @@ def create_knowledge_graph(thread_data: dict) -> dict:
                 
                 # Handle replies for the comment
                 for j, reply in enumerate(comment.get("replies", [])):
-                    if "id" not in reply or not reply["id"]:
-                        reply["id"] = f"reply_{comment['id']}_{j}"
+                    # CRITICAL: Use deterministic ID generation - same input = same output
+                    original_reply_id = reply.get("id", "")
+                    
+                    if original_reply_id:
+                        # Simple, consistent format that never changes
+                        reply["id"] = f"reply_{original_reply_id}"
                     else:
-                        reply["id"] = f"{comment['id']}_{reply['id']}"
-                    reply.update({"discussion_id": discussion_id})
+                        # Deterministic fallback using comment ID and position
+                        reply["id"] = f"reply_{comment['id']}_{j}"
+                    
+                    reply.update({
+                        "discussion_id": discussion_id,
+                        "parent_comment_id": comment["id"]
+                    })
 
+                    # Debug logging
+                    logger.info(f"Processing reply ID: {reply['id']} for comment: {comment['id']}")
+                    
                     # Check if the reply is already in the database
                     reply_exists = session.execute_read(check_reply_exists, reply["id"], discussion_id)
+                    logger.info(f"Reply {reply['id']} already exists: {reply_exists}")
+                    
+                    # Always merge (update if exists, create if not)
                     session.execute_write(merge_reply, reply)
 
+                    # Only process new replies
                     if not reply_exists:
+                        logger.info(f"Adding NEW reply: {reply['id']}")
+                        new_content_added = True
                         reply_count += 1
                         session.execute_write(connect_reply_to_comment, reply["id"], comment["id"], discussion_id)
 
@@ -208,10 +265,16 @@ def create_knowledge_graph(thread_data: dict) -> dict:
                             session.execute_write(merge_argument, arg, reply.get("stance", "NEUTRAL"), discussion_id)
                             session.execute_write(connect_argument_to_reply, arg, reply["id"], discussion_id)
                             argument_count += 1
+                    else:
+                        logger.info(f"Skipping existing reply: {reply['id']}")
 
-        group_arguments_by_stance(discussion_id)
+        # Only regroup arguments if new content was added
+        if new_content_added:
+            logger.info("New content was added - regrouping arguments")
+            group_arguments_by_stance(discussion_id)
+        else:
+            logger.info("No new content added - skipping argument regrouping")
     
-
     return {
         "status": "success",
         "discussion_id": discussion_id,
@@ -220,7 +283,8 @@ def create_knowledge_graph(thread_data: dict) -> dict:
             "comments": comment_count,
             "replies": reply_count,
             "arguments": argument_count
-        }
+        },
+        "new_content_added": new_content_added
     }
 
 
@@ -229,9 +293,18 @@ def group_arguments_by_stance(discussion_id: str):
         return
 
     with driver.session() as session:
+        # First, clear existing argument groups for this discussion
+        session.run("""
+            MATCH (a:Argument {discussion_id: $discussion_id})-[r:HAS_GROUP]->(g:ArgumentGroup)
+            DELETE r
+            WITH DISTINCT g
+            WHERE NOT (g)<-[:HAS_GROUP]-()
+            DELETE g
+        """, discussion_id=discussion_id)
+
         # Loop through each stance
         for stance in ["FOR", "AGAINST", "NEUTRAL"]:
-            # Get all arguments for this stance
+            # Get all arguments for this stance and discussion
             result = session.run("""
                 MATCH (a:Argument)
                 WHERE a.stance = $stance AND a.discussion_id = $discussion_id
@@ -260,19 +333,18 @@ def group_arguments_by_stance(discussion_id: str):
 
             # Write group and links to database
             for group_summary, arg_list in group_map.items():
+                # Create unique group identifier combining summary, stance, and discussion_id
                 session.run("""
-                    MERGE (g:ArgumentGroup {summary: $summary, stance: $stance})
+                    MERGE (g:ArgumentGroup {summary: $summary, stance: $stance, discussion_id: $discussion_id})
                     SET g.updated_at = datetime()
-                """, summary=group_summary, stance=stance)
+                """, summary=group_summary, stance=stance, discussion_id=discussion_id)
 
                 for arg in arg_list:
                     session.run("""
                         MATCH (a:Argument {text: $text, discussion_id: $discussion_id})
-                        MATCH (g:ArgumentGroup {summary: $summary, stance: $stance})
+                        MATCH (g:ArgumentGroup {summary: $summary, stance: $stance, discussion_id: $discussion_id})
                         MERGE (a)-[:HAS_GROUP]->(g)
                     """, text=arg, discussion_id=discussion_id, summary=group_summary, stance=stance)
-
-
 
 
 # Cypher helpers
@@ -289,14 +361,16 @@ def check_comment_exists(tx, comment_id, discussion_id):
         MATCH (c:Comment {id: $comment_id, discussion_id: $discussion_id})
         RETURN count(c) > 0 AS exists
     """, comment_id=comment_id, discussion_id=discussion_id)
-    return result.single()["exists"]
+    record = result.single()
+    return record["exists"] if record else False
 
 def check_reply_exists(tx, reply_id, discussion_id):
     result = tx.run("""
         MATCH (r:Reply {id: $reply_id, discussion_id: $discussion_id})
         RETURN count(r) > 0 AS exists
     """, reply_id=reply_id, discussion_id=discussion_id)
-    return result.single()["exists"]
+    record = result.single()
+    return record["exists"] if record else False
 
 def merge_topic(tx, title, discussion_id, url):
     tx.run("""
@@ -323,7 +397,11 @@ def connect_comment_to_topic(tx, comment_id, topic_title, stance, discussion_id)
 def merge_reply(tx, reply):
     tx.run("""
         MERGE (r:Reply {id: $id, discussion_id: $discussion_id})
-        SET r.body = $body, r.author = $author, r.score = $score, r.updated_at = datetime()
+        SET r.body = $body, 
+            r.author = $author, 
+            r.score = $score, 
+            r.parent_comment_id = $parent_comment_id, 
+            r.updated_at = datetime()
     """, **reply)
 
 def connect_reply_to_comment(tx, reply_id, comment_id, discussion_id):

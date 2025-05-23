@@ -25,11 +25,21 @@ summarizer_prompt = PromptTemplate(
     You are an expert at synthesizing online discussions. 
     Given the following user comments that share a similar stance in an online discussion, summarize the key points into a few concise bullet points.
     
+    ### Guidelines:
+    - Begin each bullet point with a short **title**, followed by a colon and the full idea.
+    - The summary should be **self-contained** and reflect the main reasoning shared across the comments.
+    - Do not repeat similar points. Focus on **distinct insights**.
 
-    **Comments:**
+    ### Example Output:
+
+    - Economic Barriers: Many people want children but face high costs of childcare, healthcare, and housing.
+    - Cultural Priorities: Modern values emphasize personal freedom and career growth, delaying or reducing interest in parenthood.
+    - Policy Skepticism: Financial incentives like $5,000 are seen as insufficient or ineffective in changing birth rates.
+
+    ### Comments:
     {comments}
 
-    **Summary (bullet points):**
+    ### Summary (bullet points):
     """
 )
 
