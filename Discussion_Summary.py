@@ -182,7 +182,7 @@ elif st.session_state.page == 'incremental_analysis':
 
         grouped_comments = {"FOR": [], "AGAINST": [], "NEUTRAL": []}
         all_classified_bodies = {"FOR": [], "AGAINST": [], "NEUTRAL": []}
-        all_replies = []  # <-- Move here, outside the loop
+        all_replies = []  
 
         progress_bar = st.progress(0)
         status_text = st.empty()

@@ -13,7 +13,7 @@ class SummarizeRequest(BaseModel):
 
 # Initialize summarizer model
 summarizer = ChatOpenAI(
-    model="gpt-4o-mini",  
+    model="gpt-4o",  
     openai_api_key=openai_api_key, 
     temperature=0.2
 )

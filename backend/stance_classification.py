@@ -31,7 +31,7 @@ stance_prompt = PromptTemplate(
     - FOR
     - NEUTRAL
 
-    Keep in mind that the comments can contain sarcasm, irony. Do NOT provide any explanation, analysis, or additional text.
+    Keep in mind that the comments can contain sarcasm and irony. Do NOT provide any explanation, analysis, or additional text.
 
     Reddit Thread:
     Title: "{thread_title}"

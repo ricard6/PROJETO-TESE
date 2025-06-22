@@ -211,7 +211,7 @@ if selected_topic:
     # Parameters already set based on topic selection
     parameters = {"title": selected_topic}
 
-    # Only show display mode option if the selected query is the one you want
+    # Only show display mode option if the selected query is the one wanted
     if selected_query_label == "Argument Groups by Popularity":
         display_mode = st.radio("Display Mode", ["Group Overview", "Full Detail (show every argument)"])
     else:
@@ -252,9 +252,20 @@ if selected_topic:
                     ]
 
                     if detail_rows:
-                        st.dataframe(pd.DataFrame(detail_rows), use_container_width=True)
-                    else:
-                        st.info("No arguments found to display.")
+                        df = pd.DataFrame(detail_rows)
+
+                        # Aplicar estilos de largura às colunas
+                        df_styled = df.style.set_table_styles(
+                            [
+                                {"selector": "th.col0", "props": [("max-width", "300px"), ("width", "300px")]},  # Group Summary
+                                {"selector": "th.col1", "props": [("max-width", "600px"), ("width", "600px")]},  # Argument Text
+                                {"selector": "th.col2", "props": [("max-width", "60px"), ("width", "60px")]}     # Stance
+                            ]
+                        )
+
+                    st.dataframe(df_styled, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No arguments found to display.")
 
             elif selected_query_label in ["Replies to Supporting Comments", "Replies to Opposing Comments"]:
                 if "Replies" in results[0] and "ParentComment" in results[0]:

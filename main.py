@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from backend.reddit_scraper import fetch_reddit_data, RedditRequest, RedditResponse
 from backend.topic_identifier import topicIdentifier, TopicIdentifierRequest
-from backend.summarize import SummarizeRequest, summarize_grouped_comments
+from backend.summarize import summarize_grouped_comments
 from backend.stance_classification import stance_classifier, StanceClassificationRequest
 from backend.kg_creator import KGRequest, create_knowledge_graph
 from typing import Dict, List

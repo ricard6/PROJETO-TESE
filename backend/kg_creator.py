@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 import logging
 
 
@@ -48,7 +48,9 @@ argument_extraction_prompt = PromptTemplate(
     template="""
     You are an AI trained to extract formal, self-contained, **non-redundant arguments** from Reddit discussions.
 
-    Your task is to extract only arguments that can be used in scientific, academic, or logical contexts. Arguments should clearly support or oppose a specific claim related to the discussion topic. Avoid insults, and vague statements.
+    Your task is to extract only arguments that can be used in scientific, academic, or logical contexts. 
+    Arguments should clearly support or oppose a specific claim related to the discussion topic. 
+    Avoid insults, and vague statements.
 
     ### INSTRUCTIONS:
     - Extract arguments that include **reasoning, causal relationships, or factual claims**.
@@ -100,13 +102,40 @@ argument_extraction_prompt = PromptTemplate(
 # Build the argument extraction chain
 argument_chain = argument_extraction_prompt | llm
 
+# Prompt to classify arguments
+stance_classification_prompt = PromptTemplate(
+    input_variables=["argument", "topic"],
+    template="""
+    You are given the Reddit discussion topic:
+    "{topic}"
+
+    Classify the stance expressed in the following argument with one of these labels: FOR, AGAINST, or NEUTRAL.
+
+    Argument:
+    "{argument}"
+
+    Instructions:
+    - FOR: The argument expresses clear or implicit support for the topic.
+    - AGAINST: The argument expresses clear or implicit opposition to the topic.
+    - NEUTRAL: The argument neither supports nor opposes the topic, or is ambiguous.
+
+    Consider the overall position conveyed, including implicit meanings or nuances, not only explicit statements.
+
+    Return exactly one word: FOR, AGAINST, or NEUTRAL.
+    """
+)
+
+stance_classifier = stance_classification_prompt | llm
+
+#Prompt to create argument clusters
 argument_grouping_prompt = PromptTemplate(
     input_variables=["stance", "arguments"],
     template="""
     You are an AI system trained to group semantically similar arguments from Reddit discussions.
 
     ### Objective:
-    Given a list of arguments that all share the same stance ("{stance}") toward a topic, group those that express the same specific idea — even if they use different wording. For each group, write a **detailed and self-contained summary** that explains the **shared claim** and the **main reasoning** behind it.
+    Given a list of arguments that all share the same stance ("{stance}") toward a topic, group those that express the same specific idea — even if they use different wording. 
+    For each group, write a **detailed and self-contained summary** that explains the **shared claim** and the **main reasoning** behind it.
 
     ### Instructions:
     - The summary must make it **completely clear what the core argument is** without reading the individual comments.
@@ -137,14 +166,26 @@ argument_grouping_chain = argument_grouping_prompt | llm
 class KGRequest(BaseModel):
     thread_data: Dict[str, Any]
 
-# Argument extraction
-def extract_arguments(text: str, topic: str) -> List[str]:
+# Extrai argumentos e classifica a stance de cada um
+def extract_and_classify_arguments(text: str, topic: str) -> List[Tuple[str, str]]:
     response = argument_chain.invoke({"text": text, "topic": topic})
-    content = response.content.strip()  # ✅ get actual string
+    content = response.content.strip()
 
     if "No clear arguments found" in content:
         return []
-    return [line.split(" ", 1)[-1].strip() for line in content.split('\n') if line.strip()]
+
+    extracted = [line.split(" ", 1)[-1].strip() for line in content.split('\n') if line.strip()]
+    result = []
+
+    for arg in extracted:
+        stance_resp = stance_classifier.invoke({"argument": arg, "topic": topic})
+        stance = stance_resp.content.strip().upper()
+        if stance in ["FOR", "AGAINST", "NEUTRAL"]:
+            result.append((arg, stance))
+        else:
+            logger.warning(f"Invalid stance returned for argument: {arg} -> {stance}")
+
+    return result
 
 # Debug function to see what's in the database
 def debug_existing_content(discussion_id):
@@ -217,10 +258,9 @@ def create_knowledge_graph(thread_data: dict) -> dict:
                     session.execute_write(connect_comment_to_topic, comment["id"], topic_title, stance, discussion_id)
 
                     # Extract arguments from the comment and store them in the graph
-                    arguments = extract_arguments(comment.get("body", ""), topic_title)
-                    for arg in arguments:
-                        arg = arg.strip()
-                        session.execute_write(merge_argument, arg, stance, discussion_id)
+                    arguments_with_stance = extract_and_classify_arguments(comment.get("body", ""), topic_title)
+                    for arg, stance_classified in arguments_with_stance:
+                        session.execute_write(merge_argument, arg, stance_classified, discussion_id)
                         session.execute_write(connect_argument_to_comment, arg, comment["id"], discussion_id)
                         argument_count += 1
                 
@@ -259,10 +299,9 @@ def create_knowledge_graph(thread_data: dict) -> dict:
                         session.execute_write(connect_reply_to_comment, reply["id"], comment["id"], discussion_id)
 
                         # Extract and add arguments from the reply
-                        arguments = extract_arguments(reply.get("body", ""), topic_title)
-                        for arg in arguments:
-                            arg = arg.strip()
-                            session.execute_write(merge_argument, arg, reply.get("stance", "NEUTRAL"), discussion_id)
+                        arguments_with_stance = extract_and_classify_arguments(reply.get("body", ""), topic_title)
+                        for arg, stance_classified in arguments_with_stance:
+                            session.execute_write(merge_argument, arg, stance_classified, discussion_id)
                             session.execute_write(connect_argument_to_reply, arg, reply["id"], discussion_id)
                             argument_count += 1
                     else:
